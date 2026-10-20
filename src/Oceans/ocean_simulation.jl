@@ -388,7 +388,7 @@ override the defaults on a per-field basis.
 - `tracer_advection`: Tracer advection scheme or named tuple of schemes. Defaults to `WENO(order=7, time_discretization = AdaptiveVerticallyImplicitDiscretization(cfl=0.5))`.
 - `equation_of_state`: Equation of state object. Defaults to TEOS-10 (`TEOS10EquationOfState`).
 - `boundary_conditions`: User-supplied boundary conditions; merged with defaults.
-- `radiative_forcing`: Additional temperature forcing; merged into `forcing`.
+- `radiative_forcing`: Additional temperature forcing; merged into `forcing`. The radiation is also passed to CATKE if we are using CATKE.
 - `materialize_buoyancy_gradients`: whether the buoyancy gradients are precomputed and stored in fields. Default: `false`.
 - `river_routing`: `NamedTuple` of [`RiverRouting`](@ref), typically `land.river_routing`. Defaults to
   `nothing`, which leaves `closure` untouched.
@@ -430,6 +430,8 @@ function hydrostatic_ocean_simulation(grid;
                                       verbose = false)
 
     FT = eltype(grid)
+
+    closure = with_penetrative_radiation(closure, penetrating_radiation(radiative_forcing))
 
     if !isnothing(river_routing)
         river_mixing = river_mouth_vertical_diffusivity(grid, river_routing;
