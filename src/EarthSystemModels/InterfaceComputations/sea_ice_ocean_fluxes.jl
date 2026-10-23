@@ -1,5 +1,5 @@
 using Oceananigans.Operators: Δzᶜᶜᶜ
-using Oceananigans.Grids: znode
+using Oceananigans.Grids: znode, peripheral_node
 using ClimaSeaIce.SeaIceThermodynamics: melting_temperature
 using ClimaSeaIce.SeaIceDynamics: implicit_τx_coefficient, implicit_τy_coefficient
 
@@ -32,7 +32,7 @@ function compute_sea_ice_ocean_fluxes!(coupled_model)
 end
 
 function compute_sea_ice_ocean_fluxes!(interface, ocean, sea_ice, ocean_properties)
-    Δt = sea_ice.Δt
+    Δt = ocean.Δt
     Tᵒᶜ = ocean_temperature(ocean)
     Sᵒᶜ = ocean_salinity(ocean)
     Sⁱ = sea_ice.model.tracers.S
@@ -45,6 +45,7 @@ function compute_sea_ice_ocean_fluxes!(interface, ocean, sea_ice, ocean_properti
     L = phase_transitions.reference_latent_heat
 
     grid = sea_ice.model.grid
+    ocean_grid = Oceananigans.Grids.grid(ocean)
     clock = sea_ice.model.clock
     arch = architecture(grid)
 
@@ -70,7 +71,7 @@ function compute_sea_ice_ocean_fluxes!(interface, ocean, sea_ice, ocean_properti
     end
 
     launch!(arch, grid, :xy, _compute_sea_ice_ocean_fluxes!,
-            flux_formulation, fluxes, Tˢⁱ, Sˢⁱ, grid, clock,
+            flux_formulation, fluxes, Tˢⁱ, Sˢⁱ, grid, ocean_grid, clock,
             hˢⁱ, hc, ℵ, Sⁱ, Tᵒᶜ, Sᵒᶜ, uˢⁱ, vˢⁱ, τₛ,
             liquidus, ocean_properties, L, Δt, mass_fluxes.ice, mass_fluxes.snow)
 
@@ -114,6 +115,7 @@ end
                                                 interface_temperature,
                                                 interface_salinity,
                                                 grid,
+                                                ocean_grid,
                                                 clock,
                                                 ice_thickness,
                                                 ice_consolidation_thickness,
@@ -133,7 +135,7 @@ end
 
     i, j = @index(Global, NTuple)
 
-    Nz = size(grid, 3)
+    Nz = size(ocean_grid, 3)
     𝒬ᶠʳᶻ = fluxes.frazil_heat
     𝒬ⁱⁿ = fluxes.interface_heat
     Jˢ = fluxes.salt
@@ -154,39 +156,23 @@ end
     # =============================================
     # Part 1: Frazil ice formation (all formulations)
     # =============================================
-    # When ocean temperature drops below freezing, frazil ice forms
-    # and heat is released to the ice component.
-
-    δ𝒬ᶠʳᶻ = zero(grid)
-
-    for k = Nz:-1:1
-        @inbounds begin
-            Δz = Δzᶜᶜᶜ(i, j, k, grid)
-            Tᵏ = Tᵒᶜ[i, j, k]
-            Sᵏ = Sᵒᶜ[i, j, k]
-        end
-
-        # Melting/freezing temperature at this depth
-        z  = znode(i, j, k, grid, Center(), Center(), Center())
-        Tₘ = melting_temperature(liquidus, Sᵏ, z)
-        freezing = Tᵏ < Tₘ
-
-        # Compute change in ocean heat energy due to freezing.
-        # When Tᵏ < Tₘ, we heat the ocean back to melting temperature
-        # by extracting heat from the ice.
-        δE = freezing * ρᵒᶜ * cᵒᶜ * (Tₘ - Tᵏ)
-
-        # Perform temperature adjustment
-        @inbounds Tᵒᶜ[i, j, k] = ifelse(freezing, Tₘ, Tᵏ)
-
-        # Compute the heat flux from ocean into ice during frazil formation.
-        # A negative value δ𝒬ᶠʳᶻ < 0 implies heat is fluxed from the ice into
-        # the ocean (frazil ice formation).
-        δ𝒬ᶠʳᶻ -= δE * Δz / Δt
+    # Only surface frazil can enter the sea-ice heat budget.
+    k = Nz
+    @inbounds begin
+        Δz = Δzᶜᶜᶜ(i, j, k, ocean_grid)
+        Tᵏ = Tᵒᶜ[i, j, k]
+        Sᵏ = Sᵒᶜ[i, j, k]
     end
 
-    # Store frazil heat flux
-    @inbounds 𝒬ᶠʳᶻ[i, j, 1] = δ𝒬ᶠʳᶻ
+    z = znode(i, j, k, ocean_grid, Center(), Center(), Center())
+    Tₘ = melting_temperature(liquidus, Sᵏ, z)
+    freezing = (Tᵏ < Tₘ) & !peripheral_node(i, j, k, ocean_grid, Center(), Center(), Center())
+    δE = freezing * ρᵒᶜ * cᵒᶜ * (Tₘ - Tᵏ)
+
+    @inbounds begin
+        Tᵒᶜ[i, j, k] = ifelse(freezing, Tₘ, Tᵏ)
+        𝒬ᶠʳᶻ[i, j, 1] = -δE * Δz / Δt
+    end
 
     @inbounds begin
         Tᴺ  = Tᵒᶜ[i, j, Nz]
