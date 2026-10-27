@@ -39,6 +39,7 @@ ZipFile = "a5390f91-8eb1-5f08-bee0-b1d1ffed6cea"
 
 [sources]
 NumericalEarth = {path = ".."}
+ClimaSeaIce = {url = "https://github.com/RafaelAbel/ClimaSeaIce.jl.git", rev = "4617479fe5484e83c43bed160c299ab3c68c4ce3"}
 
 [compat]
 ArchGDAL = "0.10"

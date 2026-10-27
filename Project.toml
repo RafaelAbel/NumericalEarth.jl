@@ -7,6 +7,9 @@ authors = ["NumericalEarth contributors"]
 [workspace]
 projects = ["docs", "examples", "test"]
 
+[sources]
+ClimaSeaIce = {url = "https://github.com/RafaelAbel/ClimaSeaIce.jl.git", rev = "4617479fe5484e83c43bed160c299ab3c68c4ce3"}
+
 [deps]
 Accessors = "7d9f7c33-5ae7-4f3b-8dc6-eff91059b697"
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
