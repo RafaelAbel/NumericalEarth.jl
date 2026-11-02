@@ -1,8 +1,11 @@
 include("runtests_setup.jl")
 
+using Oceananigans.TimeSteppers: update_state!
 using NumericalEarth.Radiations: PrescribedRadiation,
                                  SurfaceRadiationProperties,
                                  InterfaceRadiationFlux
+using ClimaSeaIce.SeaIceThermodynamics: SeaIceColumnDiscretization,
+                                       FixedDrainedIceSalinityProfile, melting_temperature
 
 @testset "PrescribedRadiation construction" begin
     for arch in test_architectures
@@ -110,5 +113,40 @@ end
         @test radiation.downwelling_shortwave isa FieldTimeSeries
         @test radiation.downwelling_longwave isa FieldTimeSeries
         @test radiation.surface_properties.ocean isa SurfaceRadiationProperties
+    end
+end
+
+@testset "Radiative cooling when column ice enters an empty cell" begin
+    for arch in test_architectures, FT in (Float32, Float64)
+        ocean_grid = RectilinearGrid(arch, FT; size = 2, z = (-20, 0), topology = (Flat, Flat, Bounded))
+        ice_grid = RectilinearGrid(arch, FT; size = 8, z = SeaIceColumnDiscretization((0, 1)),
+                                  topology = (Flat, Flat, Bounded))
+        atmosphere_grid = RectilinearGrid(arch, FT; size = 1, z = (0, 10), topology = (Flat, Flat, Bounded))
+        ocean = ocean_simulation(ocean_grid; momentum_advection = nothing, tracer_advection = nothing,
+                                 closure = nothing, radiative_forcing = nothing)
+        set!(ocean.model; T = -1.8, S = 35)
+        sea_ice = sea_ice_simulation(ice_grid, ocean; thermodynamics = :column, dynamics = nothing,
+                                    advection = nothing, column_bulk_salinity = FixedDrainedIceSalinityProfile(FT))
+        set!(sea_ice.model; h = 0, ℵ = 0, hs = 0)
+        atmosphere = PrescribedAtmosphere(atmosphere_grid)
+        set!(atmosphere; T = 250, p = 101325, q = 0.0005, u = 5, v = 0)
+        radiation = PrescribedRadiation(atmosphere_grid)
+        set!(radiation; downwelling_shortwave = 0, downwelling_longwave = 100)
+        coupled_model = OceanSeaIceModel(ocean, sea_ice; atmosphere, radiation)
+        @test minimum(sea_ice.model.external_heat_fluxes.top.temperature_derivative) > 0
+
+        # Ice arrives after the forcing update.
+        set!(sea_ice.model; h = 6, ℵ = 0.1, hs = 0.1)
+        thermodynamics = sea_ice.model.ice_thermodynamics
+        salinity = Array(interior(thermodynamics.fields.bulk_salinity))
+        liquidus = thermodynamics.relation.phase_transitions.liquidus
+        temperature = FT(1.1) .* melting_temperature.(Ref(liquidus), salinity)
+        set!(thermodynamics; temperature)
+        for _ in 1:8
+            time_step!(sea_ice.model, 5400)
+            @test minimum(sea_ice.model.snow_thermodynamics.top_surface_temperature) > -273.15
+            update_state!(coupled_model)
+        end
+        @test all(isfinite, Array(interior(thermodynamics.fields.internal_energy)))
     end
 end
