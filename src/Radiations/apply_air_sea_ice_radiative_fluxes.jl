@@ -38,8 +38,7 @@ function _apply_air_sea_ice_radiative_fluxes_dispatch!(coupled_model::EarthSyste
     surface_temperature = coupled_model.interfaces.atmosphere_sea_ice_interface.temperature
     sea_ice_properties = coupled_model.interfaces.sea_ice_properties
     top_flux = sea_ice.model.external_heat_fluxes.top
-    area_weight = ifelse(sea_ice.model.ice_thermodynamics isa ColumnEnergyThermodynamics,
-                         OneField(eltype(grid)), sea_ice_concentration(sea_ice))
+    area_weight = sea_ice_area_weight(sea_ice.model.ice_thermodynamics, sea_ice, eltype(grid))
 
     launch!(arch, grid, :xy,
             _apply_air_sea_ice_radiative_fluxes!,
@@ -53,17 +52,28 @@ function _apply_air_sea_ice_radiative_fluxes_dispatch!(coupled_model::EarthSyste
             surface_temperature,
             sea_ice_properties)
 
-    if top_flux isa LinearizedSurfaceFlux
-        launch!(arch, grid, :xy,
-                _add_sea_ice_radiative_flux_derivative!,
-                top_flux.temperature_derivative,
-                top_flux.reference_temperature,
-                interface_fluxes.sea_ice.upwelling_longwave,
-                area_weight,
-                grid,
-                sea_ice_properties)
-    end
+    add_sea_ice_radiative_flux_derivative!(top_flux, arch, grid,
+                                           interface_fluxes.sea_ice.upwelling_longwave,
+                                           area_weight,
+                                           grid,
+                                           sea_ice_properties)
 
+    return nothing
+end
+
+# Column ice carries fluxes per unit ice area. Other ice carries them per unit cell area.
+sea_ice_area_weight(thermodynamics, sea_ice, FT) = sea_ice_concentration(sea_ice)
+sea_ice_area_weight(::ColumnEnergyThermodynamics, sea_ice, FT) = OneField(FT)
+
+# Only a linearized top flux needs a temperature derivative.
+add_sea_ice_radiative_flux_derivative!(top_flux, args...) = nothing
+
+function add_sea_ice_radiative_flux_derivative!(top_flux::LinearizedSurfaceFlux, arch, grid, args...)
+    launch!(arch, grid, :xy,
+            _add_sea_ice_radiative_flux_derivative!,
+            top_flux.temperature_derivative,
+            top_flux.reference_temperature,
+            args...)
     return nothing
 end
 

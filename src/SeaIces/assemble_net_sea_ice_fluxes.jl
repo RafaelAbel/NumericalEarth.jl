@@ -1,3 +1,7 @@
+# Column ice carries fluxes per unit ice area. Other ice carries them per unit cell area.
+net_fluxes_per_ice_area(thermodynamics) = false
+net_fluxes_per_ice_area(::ColumnEnergyThermodynamics) = true
+
 using Oceananigans.Fields: ZeroField
 
 using ..EarthSystemModels: sea_ice_concentration, NoAtmosInterfaceModel
@@ -23,7 +27,7 @@ function EarthSystemModels.update_net_fluxes!(coupled_model, sea_ice::Simulation
 
     sea_ice_properties = coupled_model.interfaces.sea_ice_properties
     ice_concentration = sea_ice_concentration(sea_ice)
-    per_ice_area = sea_ice.model.ice_thermodynamics isa ColumnEnergyThermodynamics
+    per_ice_area = net_fluxes_per_ice_area(sea_ice.model.ice_thermodynamics)
 
     launch!(arch, grid, :xy,
             _assemble_net_sea_ice_fluxes!,
